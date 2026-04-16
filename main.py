@@ -14,46 +14,66 @@ chunks = [c.strip() for c in kb_text.split("\n") if c.strip() != ""]
 # Create embeddings
 embeddings = model.encode(chunks)
 
-# 🔥 Confidence threshold
+# 🔥 Thresholds
 CONFIDENCE_THRESHOLD = 0.5
+ANSWER_SIM_THRESHOLD = 0.6
 
 
-def ask_question(question):
-    question_emb = model.encode([question])[0]
-
+# ✅ Retrieval function (MISSING in your code)
+def retrieve(query, top_k=2):
+    query_emb = model.encode([query])[0]
+    
     scores = []
-
-    for chunk, chunk_emb in zip(chunks, embeddings):
-        score = cosine_similarity([question_emb], [chunk_emb])[0][0]
+    for chunk, emb in zip(chunks, embeddings):
+        score = cosine_similarity([query_emb], [emb])[0][0]
         scores.append((score, chunk))
-
-    # Sort by score
+    
     scores.sort(reverse=True)
+    return scores[:top_k]
 
+
+def ask_question(query):
+    results = retrieve(query)
+    
     print("\nTop Retrieved Chunks:")
-    for s, c in scores[:2]:
-        print(f"Score: {s:.3f} | {c}")
+    for score, chunk in results:
+        print(f"Score: {score:.3f} | {chunk}")
+    
+    best_score, best_chunk = results[0]
 
-    best_score, best_chunk = scores[0]
-
-    # 🔥 Validation layer
+    # ❌ Step 1: retrieval validation
     if best_score < CONFIDENCE_THRESHOLD:
         return "I don’t know based on available data."
 
-    return best_chunk
+    # ✅ Step 2: simulated answer (later replace with LLM)
+    answer = best_chunk
+
+    # 🔥 Step 3: answer-context similarity
+    answer_emb = model.encode(answer)
+    context_emb = model.encode(best_chunk)
+
+    similarity = cosine_similarity([answer_emb], [context_emb])[0][0]
+
+    print(f"\nAnswer-Context Similarity: {similarity:.3f}")
+
+    # ❌ Step 4: validation
+    if similarity < ANSWER_SIM_THRESHOLD:
+        return "Generated answer is not grounded in context."
+
+    return answer
 
 
-# Main loop
+# ✅ Clean main loop (ONLY ONCE)
 if __name__ == "__main__":
     while True:
-        question = input("\nAsk a question: ")
-
-        if question.lower() == "exit":
+        q = input("\nAsk a question: ")
+        
+        if q.lower() == "exit":
             break
-
-        if question.strip() == "":
+        
+        if q.strip() == "":
             print("\nAnswer: Please ask a valid question.")
             continue
-
-        answer = ask_question(question)
-        print("\nAnswer:", answer)
+        
+        ans = ask_question(q)
+        print("\nAnswer:", ans)
