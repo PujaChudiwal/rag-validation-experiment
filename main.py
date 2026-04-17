@@ -1,12 +1,9 @@
-from sentence_transformers import SentenceTransformer, CrossEncoder
+from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
+import random
 
-# Load embedding model (fast retriever)
+# Load embedding model
 model = SentenceTransformer('all-MiniLM-L6-v2')
-
-# Load cross-encoder (accurate re-ranker)
-cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
 
 # Load knowledge base
 with open("kb.txt", "r") as f:
@@ -23,6 +20,7 @@ CONFIDENCE_THRESHOLD = 0.5
 ANSWER_SIM_THRESHOLD = 0.6
 
 
+# Retrieval
 def retrieve(query, top_k=2):
     query_emb = model.encode(query)
 
@@ -35,18 +33,58 @@ def retrieve(query, top_k=2):
     return scores[:top_k]
 
 
-# NEW: Cross-encoder re-ranking (dynamic, no static keywords)
+# Smart chunk selection (no hardcoded keywords)
 def select_best_chunk(query, results):
-    pairs = [(query, chunk) for _, chunk in results]
+    query_words = set(query.lower().split())
 
-    scores = cross_encoder.predict(pairs)
+    best_chunk = None
+    best_score = -1
 
-    best_idx = int(np.argmax(scores))
-    best_chunk = results[best_idx][1]
+    for score, chunk in results:
+        chunk_words = set(chunk.lower().split())
+
+        # keyword overlap
+        overlap = len(query_words.intersection(chunk_words))
+
+        # combined score
+        final_score = score + (0.1 * overlap)
+
+        if final_score > best_score:
+            best_score = final_score
+            best_chunk = chunk
 
     return best_chunk
 
+# Simulate LLM behavior (NO hardcoding)
+def simulate_llm_answer(query, context_chunks):
+    """
+    Simulates realistic LLM behavior:
+    - correct
+    - mixed context
+    - distorted facts
+    """
 
+    mode = random.choice(["correct", "mix", "distort"])
+
+    # correct
+    if mode == "correct":
+        return context_chunks[0]
+
+    #  mix multiple chunks
+    elif mode == "mix":
+        return " ".join(context_chunks[:2])
+
+    #  distort facts
+    elif mode == "distort":
+        text = context_chunks[0]
+
+        # basic distortion
+        text = text.replace("20", "30").replace("9 AM", "10 AM")
+
+        return text
+
+
+# Main QA pipeline
 def ask_question(query, top_k):
     results = retrieve(query, top_k)
 
@@ -54,38 +92,37 @@ def ask_question(query, top_k):
     for score, chunk in results:
         print(f"Score: {score:.3f} | {chunk}")
 
-    # Step 1: retrieval confidence check
+    best_chunk = select_best_chunk(query, results)
     best_score = results[0][0]
+
+    # Step 1: retrieval validation
     if best_score < CONFIDENCE_THRESHOLD:
         return "I don’t know based on available data.", None
 
-    # Step 2: re-ranking (important fix)
-    best_chunk = select_best_chunk(query, results)
+    # Combine context
+    context_chunks = [chunk for _, chunk in results]
 
-    # Combine context (for experiment visibility)
-    context = "\n".join([chunk for _, chunk in results])
+    # Step 2: simulate LLM answer
+    answer = simulate_llm_answer(query, context_chunks)
 
-    # Step 3: SLM-style answer (no LLM)
-    answer = best_chunk
+    print("\nGenerated Answer:", answer)
 
-    # Step 4: answer-context similarity check
+    # Step 3: answer-context similarity
     answer_emb = model.encode(answer)
     context_emb = model.encode(best_chunk)
 
     similarity = cosine_similarity([answer_emb], [context_emb])[0][0]
 
-    print(f"\nAnswer-Context Similarity: {similarity:.3f}")
+    print(f"Answer-Context Similarity: {similarity:.3f}")
 
+    # Step 4: validation
     if similarity < ANSWER_SIM_THRESHOLD:
-        return "Generated answer is not grounded in context.", None
+        return "Generated answer is not grounded in context.", best_chunk
 
     return answer, best_chunk
 
-    print("\n--- Combined Context ---")
-    print(context)
-    print(f"\nContext Length: {len(context)} characters")
 
-
+#  Run loop
 if __name__ == "__main__":
     while True:
         q = input("\nAsk a question: ")
@@ -97,6 +134,7 @@ if __name__ == "__main__":
             print("\nAnswer: Please ask a valid question.")
             continue
 
+        # dynamic top_k
         try:
             top_k = int(input("Enter number of chunks (top_k): "))
         except:
@@ -105,5 +143,5 @@ if __name__ == "__main__":
 
         ans, source = ask_question(q, top_k)
 
-        print("\nAnswer:", ans)
+        print("\nFinal Answer:", ans)
         print("Source:", source)

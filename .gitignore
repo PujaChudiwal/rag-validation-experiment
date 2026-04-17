@@ -2,3 +2,6 @@ rag-env/
 __pycache__/
 *.pyc
 .env
+*.save
+*.save.*
+*'
