@@ -1,12 +1,12 @@
-from sentence_transformers import SentenceTransformer, CrossEncoder
+from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
+from sentence_transformers import CrossEncoder
 
-# Load embedding model (fast retriever)
-model = SentenceTransformer('all-MiniLM-L6-v2')
-
-# Load cross-encoder (accurate re-ranker)
+# Load cross-encoder (more accurate)
 cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+
+# Load embedding model
+#model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Load knowledge base
 with open("kb.txt", "r") as f:
@@ -35,18 +35,6 @@ def retrieve(query, top_k=2):
     return scores[:top_k]
 
 
-# NEW: Cross-encoder re-ranking (dynamic, no static keywords)
-def select_best_chunk(query, results):
-    pairs = [(query, chunk) for _, chunk in results]
-
-    scores = cross_encoder.predict(pairs)
-
-    best_idx = int(np.argmax(scores))
-    best_chunk = results[best_idx][1]
-
-    return best_chunk
-
-
 def ask_question(query, top_k):
     results = retrieve(query, top_k)
 
@@ -54,21 +42,20 @@ def ask_question(query, top_k):
     for score, chunk in results:
         print(f"Score: {score:.3f} | {chunk}")
 
-    # Step 1: retrieval confidence check
-    best_score = results[0][0]
+    best_chunk = select_best_chunk(query, results)
+    best_score = results[0][0]  # keep for threshold check
+
+    # Step 1: retrieval validation
     if best_score < CONFIDENCE_THRESHOLD:
         return "I don’t know based on available data.", None
 
-    # Step 2: re-ranking (important fix)
-    best_chunk = select_best_chunk(query, results)
-
-    # Combine context (for experiment visibility)
+    # Combine context (important for experiment)
     context = "\n".join([chunk for _, chunk in results])
 
-    # Step 3: SLM-style answer (no LLM)
+    # Step 2: SLM-style answer (no LLM)
     answer = best_chunk
 
-    # Step 4: answer-context similarity check
+    # Step 3: answer-context similarity
     answer_emb = model.encode(answer)
     context_emb = model.encode(best_chunk)
 
@@ -76,14 +63,33 @@ def ask_question(query, top_k):
 
     print(f"\nAnswer-Context Similarity: {similarity:.3f}")
 
+    # Step 4: validation
     if similarity < ANSWER_SIM_THRESHOLD:
         return "Generated answer is not grounded in context.", None
 
     return answer, best_chunk
 
-    print("\n--- Combined Context ---")
-    print(context)
-    print(f"\nContext Length: {len(context)} characters")
+
+def select_best_chunk(query, results):
+    query_words = set(query.lower().split())
+
+    best_chunk = None
+    best_score = -1
+
+    for score, chunk in results:
+        chunk_words = set(chunk.lower().split())
+
+        # keyword overlap
+        overlap = len(query_words.intersection(chunk_words))
+
+        # combined score (embedding + keyword signal)
+        final_score = score + (0.1 * overlap)
+
+        if final_score > best_score:
+            best_score = final_score
+            best_chunk = chunk
+
+    return best_chunk
 
 
 if __name__ == "__main__":
@@ -97,6 +103,7 @@ if __name__ == "__main__":
             print("\nAnswer: Please ask a valid question.")
             continue
 
+        # 🔥 NEW: dynamic chunk control
         try:
             top_k = int(input("Enter number of chunks (top_k): "))
         except:
