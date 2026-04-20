@@ -18,9 +18,12 @@ embeddings = model.encode(chunks)
 # Thresholds
 CONFIDENCE_THRESHOLD = 0.5
 ANSWER_SIM_THRESHOLD = 0.6
+QUESTION_SIM_THRESHOLD = 0.5
 
 
-# Retrieval
+# -------------------------
+# RETRIEVAL
+# -------------------------
 def retrieve(query, top_k=2):
     query_emb = model.encode(query)
 
@@ -33,7 +36,9 @@ def retrieve(query, top_k=2):
     return scores[:top_k]
 
 
-# Smart chunk selection (no hardcoded keywords)
+# -------------------------
+# SMART CHUNK SELECTION
+# -------------------------
 def select_best_chunk(query, results):
     query_words = set(query.lower().split())
 
@@ -43,10 +48,8 @@ def select_best_chunk(query, results):
     for score, chunk in results:
         chunk_words = set(chunk.lower().split())
 
-        # keyword overlap
         overlap = len(query_words.intersection(chunk_words))
 
-        # combined score
         final_score = score + (0.1 * overlap)
 
         if final_score > best_score:
@@ -55,36 +58,51 @@ def select_best_chunk(query, results):
 
     return best_chunk
 
-# Simulate LLM behavior (NO hardcoding)
-def simulate_llm_answer(query, context_chunks):
-    """
-    Simulates realistic LLM behavior:
-    - correct
-    - mixed context
-    - distorted facts
-    """
 
+# -------------------------
+# GENERATOR AGENT (Simulated LLM)
+# -------------------------
+def simulate_llm_answer(query, context_chunks):
     mode = random.choice(["correct", "mix", "distort"])
 
-    # correct
     if mode == "correct":
         return context_chunks[0]
 
-    #  mix multiple chunks
     elif mode == "mix":
         return " ".join(context_chunks[:2])
 
-    #  distort facts
     elif mode == "distort":
         text = context_chunks[0]
-
-        # basic distortion
         text = text.replace("20", "30").replace("9 AM", "10 AM")
-
         return text
 
 
-# Main QA pipeline
+# -------------------------
+# VALIDATOR AGENT
+# -------------------------
+def validator_agent(query, answer, best_chunk):
+    query_emb = model.encode(query)
+    answer_emb = model.encode(answer)
+    context_emb = model.encode(best_chunk)
+
+    context_sim = cosine_similarity([answer_emb], [context_emb])[0][0]
+    question_sim = cosine_similarity([answer_emb], [query_emb])[0][0]
+
+    print(f"\n[Validator] Context Similarity: {context_sim:.3f}")
+    print(f"[Validator] Question Similarity: {question_sim:.3f}")
+
+    if context_sim < ANSWER_SIM_THRESHOLD:
+        return False, "Not grounded in context"
+
+    if question_sim < QUESTION_SIM_THRESHOLD:
+        return False, "Does not answer question"
+
+    return True, "Valid answer"
+
+
+# -------------------------
+# MAIN PIPELINE
+# -------------------------
 def ask_question(query, top_k):
     results = retrieve(query, top_k)
 
@@ -95,34 +113,30 @@ def ask_question(query, top_k):
     best_chunk = select_best_chunk(query, results)
     best_score = results[0][0]
 
-    # Step 1: retrieval validation
+    # Step 1: Retrieval validation
     if best_score < CONFIDENCE_THRESHOLD:
         return "I don’t know based on available data.", None
 
-    # Combine context
     context_chunks = [chunk for _, chunk in results]
 
-    # Step 2: simulate LLM answer
+    # Step 2: Generator Agent
     answer = simulate_llm_answer(query, context_chunks)
 
-    print("\nGenerated Answer:", answer)
+    print("\n[Generator] Answer:", answer)
 
-    # Step 3: answer-context similarity
-    answer_emb = model.encode(answer)
-    context_emb = model.encode(best_chunk)
+    # Step 3: Validator Agent
+    is_valid, reason = validator_agent(query, answer, best_chunk)
 
-    similarity = cosine_similarity([answer_emb], [context_emb])[0][0]
-
-    print(f"Answer-Context Similarity: {similarity:.3f}")
-
-    # Step 4: validation
-    if similarity < ANSWER_SIM_THRESHOLD:
-        return "Generated answer is not grounded in context.", best_chunk
+    if not is_valid:
+        print(f"[Validator Rejected]: {reason}")
+        return "I don’t know based on validation.", best_chunk
 
     return answer, best_chunk
 
 
-#  Run loop
+# -------------------------
+# RUN LOOP
+# -------------------------
 if __name__ == "__main__":
     while True:
         q = input("\nAsk a question: ")
@@ -134,7 +148,6 @@ if __name__ == "__main__":
             print("\nAnswer: Please ask a valid question.")
             continue
 
-        # dynamic top_k
         try:
             top_k = int(input("Enter number of chunks (top_k): "))
         except:
